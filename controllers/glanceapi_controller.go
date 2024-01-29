@@ -59,6 +59,7 @@ import (
 	"github.com/openstack-k8s-operators/lib-common/modules/common/statefulset"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/tls"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
+	mariadbv1 "github.com/openstack-k8s-operators/mariadb-operator/api/v1beta1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -759,6 +760,9 @@ func (r *GlanceAPIReconciler) reconcileNormal(ctx context.Context, instance *gla
 	}
 	// create StatefulSet - end
 
+	// remove finalizers from unused MariaDBAccount records
+	mariadbv1.DeleteUnusedMariaDBAccountFinalizers(ctx, helper, instance.Name, instance.Spec.DatabaseAccount, instance.Namespace)
+
 	r.Log.Info(fmt.Sprintf("Reconciled Service '%s' successfully", instance.Name))
 	return ctrl.Result{}, nil
 }
@@ -809,6 +813,16 @@ func (r *GlanceAPIReconciler) generateServiceConfig(
 		return err
 	}
 
+	databaseAccount, err := mariadbv1.GetAccount(ctx, h, instance.Spec.DatabaseAccount, instance.Namespace)
+	if err != nil {
+		return err
+	}
+
+	dbSecret, _, err := secret.GetSecret(ctx, h, databaseAccount.Spec.Secret, instance.Namespace)
+	if err != nil {
+		return err
+	}
+
 	glanceEndpoints := glanceapi.GetGlanceEndpoints(instance.Spec.APIType)
 	httpdVhostConfig := map[string]interface{}{}
 	for endpt := range glanceEndpoints {
@@ -829,8 +843,8 @@ func (r *GlanceAPIReconciler) generateServiceConfig(
 		"KeystoneInternalURL": keystoneInternalURL,
 		"KeystonePublicURL":   keystonePublicURL,
 		"DatabaseConnection": fmt.Sprintf("mysql+pymysql://%s:%s@%s/%s",
-			instance.Spec.DatabaseUser,
-			string(ospSecret.Data[instance.Spec.PasswordSelectors.Database]),
+			databaseAccount.Spec.UserName,
+			string(dbSecret.Data["DatabasePassword"]),
 			instance.Spec.DatabaseHostname,
 			glance.DatabaseName,
 		),

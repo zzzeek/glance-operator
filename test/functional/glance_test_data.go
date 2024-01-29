@@ -43,7 +43,7 @@ const (
 // GlanceTestData is the data structure used to provide input data to envTest
 type GlanceTestData struct {
 	ContainerImage              string
-	GlanceDatabaseUser          string
+	GlanceDatabaseAccount       types.NamespacedName
 	GlancePassword              string
 	GlanceServiceUser           string
 	GlancePVCSize               string
@@ -151,7 +151,10 @@ func GetGlanceTestData(glanceName types.NamespacedName) GlanceTestData {
 			Namespace: glanceName.Namespace,
 			Name:      "internalapi",
 		},
-		GlanceDatabaseUser: "glance",
+		GlanceDatabaseAccount: types.NamespacedName{
+			Namespace: glanceName.Namespace,
+			Name:      "glance",
+		},
 		// Password used for both db and service
 		GlancePassword:    "12345678",
 		GlanceServiceUser: "glance",

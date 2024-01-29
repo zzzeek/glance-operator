@@ -28,6 +28,13 @@ import (
 )
 
 var _ = Describe("Glanceapi controller", func() {
+
+	BeforeEach(func() {
+		acc, acc_secret := mariadb.CreateMariaDBAccount(glanceTest.GlanceDatabaseAccount)
+		DeferCleanup(k8sClient.Delete, ctx, acc_secret)
+		DeferCleanup(k8sClient.Delete, ctx, acc)
+	})
+
 	When("GlanceAPI CR is created", func() {
 		BeforeEach(func() {
 			DeferCleanup(th.DeleteInstance, CreateGlanceAPI(glanceTest.GlanceSingle, GetDefaultGlanceAPISpec(GlanceAPITypeSingle)))
