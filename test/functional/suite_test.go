@@ -26,11 +26,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/go-logr/logr"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	. "github.com/onsi/gomega"
 	keystone_test "github.com/openstack-k8s-operators/keystone-operator/api/test/helpers"
 	common_test "github.com/openstack-k8s-operators/lib-common/modules/common/test/helpers"
@@ -243,4 +245,35 @@ var _ = BeforeEach(func() {
 	DeferCleanup(th.DeleteNamespace, namespace)
 	//Let's create the osp-secret in advance (in common to all the test cases)
 	DeferCleanup(k8sClient.Delete, ctx, CreateGlanceSecret(glanceName.Namespace, SecretName))
+
+	// Create MariaDBAccount and Secret.
+	// both controllers rely on reading the values from these objects.
+	// TODO: this set of features should likely be in mariadb-operator/api/test/crd.
+	// but then also, we maybe shouldn't make this "BeforeEach" test in total,
+	// as the glance_controller does create this account/secret.  but the tests
+	// that run against glanceapi directly, that does not seem to run the base controller
+	// first so this would need to be set up for that one.
+	acc_secret := th.CreateSecret(
+		types.NamespacedName{Namespace: namespace, Name: "glance-db-secret"},
+		map[string][]byte{
+			"DatabasePassword": []byte(glanceTest.GlancePassword),
+		},
+	)
+	DeferCleanup(k8sClient.Delete, ctx, acc_secret)
+
+	acc := &mariadbv1.MariaDBAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      glanceTest.GlanceDatabaseAccount,
+			Namespace: glanceName.Namespace,
+		},
+		Spec: mariadbv1.MariaDBAccountSpec{
+			UserName: "glance",
+			Secret:   "glance-db-secret",
+		},
+	}
+	gomega.Eventually(func(g gomega.Gomega) {
+		g.Expect(th.K8sClient.Create(th.Ctx, acc)).Should(gomega.Succeed())
+	}, th.Timeout, th.Interval).Should(gomega.Succeed())
+
+	DeferCleanup(k8sClient.Delete, ctx, acc)
 })

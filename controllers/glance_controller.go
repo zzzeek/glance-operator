@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
@@ -51,6 +50,7 @@ import (
 	"github.com/openstack-k8s-operators/lib-common/modules/common/job"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/labels"
 	common_rbac "github.com/openstack-k8s-operators/lib-common/modules/common/rbac"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	oko_secret "github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	"github.com/openstack-k8s-operators/lib-common/modules/openstack"
@@ -210,6 +210,7 @@ func (r *GlanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&glancev1.Glance{}).
 		Owns(&glancev1.GlanceAPI{}).
 		Owns(&mariadbv1.MariaDBDatabase{}).
+		Owns(&mariadbv1.MariaDBAccount{}).
 		Owns(&keystonev1.KeystoneService{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
@@ -263,7 +264,7 @@ func (r *GlanceReconciler) reconcileDelete(ctx context.Context, instance *glance
 	r.Log.Info(fmt.Sprintf("Reconciling Service '%s' delete", instance.Name))
 
 	// remove db finalizer first
-	db, err := mariadbv1.GetDatabaseByName(ctx, helper, instance.Name)
+	db, err := mariadbv1.GetDatabaseByNameAndAccount(ctx, helper, instance.Name, instance.Spec.DatabaseAccount, instance.Namespace)
 	if err != nil && !k8s_errors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
@@ -364,19 +365,21 @@ func (r *GlanceReconciler) reconcileInit(
 	//
 	// create service DB instance
 	//
-	db := mariadbv1.NewDatabase(
-		instance.Name,
-		instance.Spec.DatabaseUser,
-		instance.Spec.Secret,
-		map[string]string{
-			"dbName": instance.Spec.DatabaseInstance,
-		},
+	db := mariadbv1.NewDatabaseForAccount(
+		instance.Spec.DatabaseInstance, // mariadb/galera service to target
+		instance.Name,                  // name used in CREATE DATABASE in mariadb
+		instance.Name,                  // CR name for MariaDBDatabase
+		instance.Spec.DatabaseAccount,  // CR name for MariaDBAccount
+		instance.Namespace,             // namespace
 	)
+
 	// create or patch the DB
-	ctrlResult, err := db.CreateOrPatchDB(
+	ctrlResult, err := db.CreateOrPatchDBByName(
 		ctx,
 		helper,
+		instance.Spec.DatabaseInstance,
 	)
+
 	if err != nil {
 		instance.Status.Conditions.Set(condition.FalseCondition(
 			condition.DBReadyCondition,
@@ -806,7 +809,7 @@ func (r *GlanceReconciler) apiDeploymentCreateOrUpdate(
 		GlanceAPITemplate: apiTemplate,
 		APIType:           apiType,
 		DatabaseHostname:  instance.Status.DatabaseHostname,
-		DatabaseUser:      instance.Spec.DatabaseUser,
+		DatabaseAccount:   instance.Spec.DatabaseAccount,
 		Secret:            instance.Spec.Secret,
 		ExtraMounts:       instance.Spec.ExtraMounts,
 		PasswordSelectors: instance.Spec.PasswordSelectors,
@@ -886,7 +889,39 @@ func (r *GlanceReconciler) generateServiceConfig(
 ) error {
 	labels := labels.GetLabels(instance, labels.GetGroupLabel(glance.ServiceName), serviceLabels)
 
-	ospSecret, _, err := secret.GetSecret(ctx, h, instance.Spec.Secret, instance.Namespace)
+	// create a new MariaDBAccount CR to be populated here.
+	//
+	// Note that we are only looking for a MariaDBAccount CR with a name
+	// and associated Secret, but **not** an actual mariadb username in a galera
+	// database.  The account
+	// has not yet been linked to a MariaDBDatabase, so it will only exist as a
+	// CR in the cluster.  Once linked to a MariaDBDatabase, the mariadb-operator
+	// will ensure it exists with rights for that database.
+	//
+	// This is an **interim** step, where later openstack-operator will
+	// ensure that MariaDBAccounts are created for all the services it
+	// initializes, and this block would no longer be present here.
+	// At that point the DatabaseAccount field can be set to be required.
+
+	r.Log.Info(fmt.Sprintf("interim create new account start for account %s", instance.Spec.DatabaseAccount))
+
+	err := mariadbv1.InterimCreateNewAccount(
+		ctx, h, instance.Spec.DatabaseAccount, "glance", instance.Namespace,
+	)
+
+	r.Log.Info("interim create new account end")
+
+	if err != nil {
+		return err
+	}
+	// end section that would be done by openstack-operator eventually
+
+	databaseAccount, err := mariadbv1.GetAccount(ctx, h, instance.Spec.DatabaseAccount, instance.Namespace)
+	if err != nil {
+		return err
+	}
+
+	dbSecret, _, err := secret.GetSecret(ctx, h, databaseAccount.Spec.Secret, instance.Namespace)
 	if err != nil {
 		return err
 	}
@@ -896,8 +931,8 @@ func (r *GlanceReconciler) generateServiceConfig(
 	templateParameters := map[string]interface{}{
 		"MinimalConfig": true, // This tells the template to generate a minimal config
 		"DatabaseConnection": fmt.Sprintf("mysql+pymysql://%s:%s@%s/%s",
-			instance.Spec.DatabaseUser,
-			string(ospSecret.Data[instance.Spec.PasswordSelectors.Database]),
+			databaseAccount.Spec.UserName,
+			string(dbSecret.Data["DatabasePassword"]),
 			instance.Status.DatabaseHostname,
 			glance.DatabaseName,
 		),

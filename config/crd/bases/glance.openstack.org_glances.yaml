@@ -44,10 +44,10 @@ spec:
                 items:
                   type: string
                 type: array
-              databaseInstance:
-                type: string
-              databaseUser:
+              databaseAccount:
                 default: glance
+                type: string
+              databaseInstance:
                 type: string
               dbPurge:
                 properties:

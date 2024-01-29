@@ -90,7 +90,7 @@ func GetGlanceDefaultSpec() map[string]interface{} {
 	return map[string]interface{}{
 		"keystoneEndpoint": "default",
 		"databaseInstance": "openstack",
-		"databaseUser":     glanceTest.GlanceDatabaseUser,
+		"databaseAccount":  glanceTest.GlanceDatabaseAccount,
 		"serviceUser":      glanceName.Name,
 		"secret":           SecretName,
 		"glanceAPIs":       GetAPIList(),
@@ -102,7 +102,7 @@ func GetGlanceDefaultSpecWithQuota() map[string]interface{} {
 	return map[string]interface{}{
 		"keystoneEndpoint": "default",
 		"databaseInstance": "openstack",
-		"databaseUser":     glanceTest.GlanceDatabaseUser,
+		"databaseAccount":  glanceTest.GlanceDatabaseAccount,
 		"serviceUser":      glanceName.Name,
 		"secret":           SecretName,
 		"glanceAPIs":       GetAPIList(),

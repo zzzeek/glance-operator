@@ -15,7 +15,7 @@ spec:
     here-foo-config
     [foo1]
     here-foo1-config
-  databaseUser: glance
+  databaseAccount: glance
   databaseHostname: glance
   debug:
     dbSync: false
@@ -34,3 +34,24 @@ spec:
   #      secretName: cert-public-svc
   #  # secret holding the tls-ca-bundle.pem to be used as a deploymend env CA bundle
   #  caBundleSecretName: combined-ca-bundle
+
+---
+
+apiVersion: mariadb.openstack.org/v1beta1
+kind: MariaDBAccount
+metadata:
+  name: glance
+spec:
+  userName: glance
+  secret: glancedb-secret
+
+---
+
+apiVersion: v1
+data:
+  # glance123
+  DatabasePassword: LXIgZ2xhbmNlMTIzCg==
+kind: Secret
+metadata:
+  name: glancedb-secret
+type: Opaque
